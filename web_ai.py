@@ -2,7 +2,7 @@ import streamlit as st
 from google import genai
 from google.genai import types
 import datetime
-from PIL import Image # BARU: Library buat ngebaca gambar
+from PIL import Image
 
 st.set_page_config(page_title="Jarvis AI", page_icon="🤖", layout="centered")
 
@@ -38,9 +38,9 @@ if "client" not in st.session_state:
 if "chat_session" not in st.session_state:
     tanggal_asli = datetime.datetime.now().strftime("%A, %d %B %Y")
     st.session_state.chat_session = st.session_state.client.chats.create(
-        model="gemini-2.5-flash", # Model ini otomatis pinter baca gambar & teks
+        model="gemini-2.5-flash", 
         config=types.GenerateContentConfig(
-            system_instruction=f"Hari ini tanggal {tanggal_asli}. Lo adalah Jarvis, asisten AI pribadi gue yang asik, gaul, cerdas, dan santai.",
+            system_instruction=f"Hari ini tanggal {tanggal_asli}. Lo adalah Jarvis, asisten AI gue. Jawablah langsung dari suara atau gambar yang gue kasih dengan santai.",
             tools=[{"google_search": {}}] 
         )
     )
@@ -50,12 +50,11 @@ if "histori_layar" not in st.session_state:
 
 
 # ==========================================
-# 3. SIDEBAR ALA CHATGPT
+# 3. SIDEBAR (DIBERSIHIN BIAR RAPI)
 # ==========================================
 with st.sidebar:
     st.title("🤖 Jarvis Menu")
     
-    # Tombol Obrolan Baru
     if st.button("📝 Obrolan Baru", use_container_width=True):
         st.session_state.histori_layar = []
         st.session_state.chat_session = st.session_state.client.chats.create(
@@ -69,15 +68,6 @@ with st.sidebar:
         
     st.divider()
     
-    # Fitur Upload Gambar di Sidebar
-    st.write("📎 **Mata Jarvis**")
-    gambar_upload = st.file_uploader("Upload gambar ke Jarvis", type=['png', 'jpg', 'jpeg'])
-    if gambar_upload:
-        st.success("Gambar nempel! Tinggal ketik perintah lo di bawah.")
-
-    st.divider()
-    
-    # Tombol Logout
     if st.button("🚪 Keluar / Logout", use_container_width=True):
         st.session_state.logged_in = False
         st.rerun()
@@ -88,13 +78,10 @@ with st.sidebar:
 # ==========================================
 st.title("🤖 Jarvis Assistant")
 
-# Variabel penyimpan teks dari tombol saran
 teks_dari_tombol = None
 
 if not st.session_state.histori_layar:
     st.write("Halo bro! Gue Jarvis. Ada yang bisa gue bantu hari ini?")
-    
-    # Kartu sekarang pake tombol asli, kalau diklik bakal ngisi teks_dari_tombol
     col1, col2, col3 = st.columns(3)
     with col1:
         if st.button("💡 Eksplor Ide\n\nBikin ide bisnis", use_container_width=True):
@@ -106,62 +93,89 @@ if not st.session_state.histori_layar:
         if st.button("⚽ Update Berita\n\nBola Semalem", use_container_width=True):
             teks_dari_tombol = "Siapa yang menang pertandingan bola semalem?"
 
-# Render histori chat (termasuk nampilin gambar yang pernah di-upload)
+# Render histori chat di layar
 for pesan in st.session_state.histori_layar:
     avatar = "🧑‍💻" if pesan["role"] == "user" else "🤖"
     with st.chat_message(pesan["role"], avatar=avatar):
         st.markdown(pesan["teks"])
-        # Kalau pesannya nyimpen gambar, tampilin juga
+        # Tampilin gambar kalau ada di memori
         if pesan.get("gambar"):
             st.image(pesan["gambar"], width=250)
+        # Tampilin play suara kalau ada di memori
+        if pesan.get("suara"):
+            st.audio(pesan["suara"], format="audio/wav")
 
 
 # ==========================================
-# 5. LOGIK PENGIRIMAN PESAN
+# 5. FITUR LAMPIRAN & REKAM SUARA
 # ==========================================
-# Cek apakah user ngetik di kotak ATAU ngeklik tombol rekomendasi
-teks_dari_input = st.chat_input("Tanya atau suruh Jarvis deskripsiin gambar...")
+st.write("") # Spasi dikit
+with st.expander("📎 Lampirkan Gambar / 🎙️ Rekam Suara", expanded=False):
+    col_img, col_mic = st.columns(2)
+    with col_img:
+        gambar_upload = st.file_uploader("Upload Gambar", type=['png', 'jpg', 'jpeg'], label_visibility="collapsed")
+    with col_mic:
+        # Fitur baru Streamlit buat rekam suara!
+        suara_upload = st.audio_input("Ngobrol pake suara")
+        
+    # Tombol rahasia biar user tetep bisa ngirim kalau males ngetik
+    if gambar_upload or suara_upload:
+        if st.button("🚀 Kirim Lampiran/Suara", use_container_width=True):
+            teks_dari_tombol = "Tolong perhatikan dan respon lampiran ini."
+
+
+# ==========================================
+# 6. LOGIK PENGIRIMAN PESAN KE AI
+# ==========================================
+teks_dari_input = st.chat_input("Ketik di sini atau pake mic di atas bro...")
 pertanyaan = teks_dari_input or teks_dari_tombol
 
 if pertanyaan:
-    # Siapin file gambar buat diproses (jika ada)
     img_pil = None
     if gambar_upload:
         img_pil = Image.open(gambar_upload)
 
-    # 1. Tampilkan chat user di layar
+    # Simpan chat ke histori layar (Termasuk byte suaranya)
     st.session_state.histori_layar.append({
         "role": "user", 
-        "teks": pertanyaan, 
-        "gambar": img_pil # Simpan gambarnya ke histori layar
+        "teks": pertanyaan if not (gambar_upload or suara_upload) else "*(Mengirim Lampiran/Suara)* " + pertanyaan, 
+        "gambar": img_pil,
+        "suara": suara_upload.getvalue() if suara_upload else None
     })
     
+    # Nampilin efek yang dikirim user ke layar saat itu juga
     with st.chat_message("user", avatar="🧑‍💻"):
         st.markdown(pertanyaan)
         if img_pil:
             st.image(img_pil, width=250)
+        if suara_upload:
+            st.audio(suara_upload.getvalue(), format="audio/wav")
     
-    # 2. Proses ke AI Gemini
+    # Proses mikir si AI
     with st.chat_message("assistant", avatar="🤖"):
         try:
+            # Merakit paket isi pesan (Teks + Gambar + Suara)
+            isi_pesan = [pertanyaan]
+            if img_pil:
+                isi_pesan.append(img_pil)
+            if suara_upload:
+                # Mengubah format suara Streamlit biar dipahami otak Gemini
+                audio_part = types.Part.from_bytes(data=suara_upload.getvalue(), mime_type="audio/wav")
+                isi_pesan.append(audio_part)
+
             def generate_typing_effect():
-                # Gabungkan teks dan gambar (kalau ada) buat dikirim barengan
-                isi_pesan = [pertanyaan]
-                if img_pil:
-                    isi_pesan.append(img_pil)
-                    
                 response_stream = st.session_state.chat_session.send_message_stream(isi_pesan)
                 for chunk in response_stream:
                     yield chunk.text
             
             respons_teks = st.write_stream(generate_typing_effect())
             
-            # Simpan balasan AI ke memori layar
             st.session_state.histori_layar.append({
                 "role": "assistant", 
                 "teks": respons_teks, 
-                "gambar": None
+                "gambar": None,
+                "suara": None
             })
             
         except Exception as e:
-            st.error(f"Waduh bro, Jarvis pusing: {e}")
+            st.error(f"Waduh bro, Jarvis lagi pusing: {e}")
