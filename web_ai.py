@@ -4,12 +4,26 @@ from google.genai import types
 import datetime
 from PIL import Image
 import uuid
-import PyPDF2 # BARU: Library buat bongkar PDF
+import PyPDF2
+from supabase import create_client, Client # BARU: Import Supabase
 
 st.set_page_config(page_title="Jarvis AI", page_icon="🤖", layout="centered")
 
+# Ambil semua rahasia dari Cloud
 API_KEY = st.secrets["Your_API_Key"]
 PIN_RAHASIA = st.secrets["App_PIN"]
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+
+# ==========================================
+# 0. KONEKSI KE DATABASE SUPABASE
+# ==========================================
+# Inisialisasi Supabase cuma sekali aja
+@st.cache_resource
+def init_supabase() -> Client:
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
+
+supabase = init_supabase()
 
 # ==========================================
 # 1. GERBANG LOGIN PIN RAHASIA
@@ -28,9 +42,8 @@ if not st.session_state.logged_in:
             st.error("PIN Salah bro! Jangan macem-macem ya.")
     st.stop()
 
-
 # ==========================================
-# 2. SISTEM LEMARI CHAT (MULTI-SESSION)
+# 2. INISIALISASI AI CLIENT
 # ==========================================
 if "client" not in st.session_state:
     st.session_state.client = genai.Client(api_key=API_KEY)
@@ -41,6 +54,8 @@ if "kumpulan_chat" not in st.session_state:
 if "chat_aktif_id" not in st.session_state:
     st.session_state.chat_aktif_id = None
 
+
+# FUNGSI: Bikin Chat Baru (Tanpa narik DB)
 def bikin_chat_baru():
     id_baru = str(uuid.uuid4())
     tanggal_asli = datetime.datetime.now().strftime("%A, %d %B %Y")
@@ -51,21 +66,61 @@ def bikin_chat_baru():
         "chat_session": st.session_state.client.chats.create(
             model="gemini-2.5-flash", 
             config=types.GenerateContentConfig(
-                system_instruction=f"Hari ini {tanggal_asli}. Lo Jarvis. Lo pinter baca dokumen dan gambar. Jawab sesuai konteks yang dikasih dengan bahasa santai.",
+                system_instruction=f"Hari ini {tanggal_asli}. Lo Jarvis. Jawab santai dan luwes.",
                 tools=[{"google_search": {}}] 
             )
         )
     }
     st.session_state.chat_aktif_id = id_baru
 
+# FUNGSI: Narik Chat Lama dari Database
+def load_chat_dari_db(session_id):
+    # Cek di lemari memori (session_state) dulu, kalau belum ada baru nembak DB
+    if session_id not in st.session_state.kumpulan_chat:
+        # Tembak Supabase
+        respons_db = supabase.table("obrolan_jarvis").select("*").eq("session_id", session_id).order("waktu").execute()
+        data_db = respons_db.data
+        
+        histori_db = []
+        for baris in data_db:
+            histori_db.append({
+                "role": baris["role"],
+                "teks": baris["pesan"],
+                "gambar": None, "suara": None, "pdf_name": None
+            })
+            
+        judul_chat = "💬 Obrolan Lama"
+        if data_db:
+            # Ambil judul dari chat pertama user di sesi ini
+            judul_chat = f"💬 {data_db[0]['pesan'][:20]}..."
+
+        tanggal_asli = datetime.datetime.now().strftime("%A, %d %B %Y")
+        
+        # Bikin sesi AI dengan menyuntikkan histori lama ke otaknya
+        sesi_baru = st.session_state.client.chats.create(
+            model="gemini-2.5-flash", 
+            config=types.GenerateContentConfig(
+                system_instruction=f"Hari ini {tanggal_asli}. Lo Jarvis.",
+                tools=[{"google_search": {}}] 
+            )
+        )
+        
+        st.session_state.kumpulan_chat[session_id] = {
+            "judul": judul_chat, 
+            "histori_layar": histori_db,
+            "chat_session": sesi_baru
+        }
+    
+    st.session_state.chat_aktif_id = session_id
+
+# Eksekusi awal saat baru buka web
 if st.session_state.chat_aktif_id is None:
     bikin_chat_baru()
 
 laci_sekarang = st.session_state.kumpulan_chat[st.session_state.chat_aktif_id]
 
-
 # ==========================================
-# 3. SIDEBAR (MENU RIWAYAT CHAT)
+# 3. SIDEBAR (MENU RIWAYAT CHAT DATABASE)
 # ==========================================
 with st.sidebar:
     st.title("🤖 Jarvis Menu")
@@ -75,13 +130,25 @@ with st.sidebar:
         st.rerun()
         
     st.divider()
-    st.write("📚 **Riwayat Obrolan**")
+    st.write("📚 **Riwayat Abadi (Database)**")
     
-    for chat_id, data_chat in st.session_state.kumpulan_chat.items():
-        label_tombol = f"**{data_chat['judul']}**" if chat_id == st.session_state.chat_aktif_id else data_chat['judul']
-        if st.button(label_tombol, key=chat_id, use_container_width=True):
-            st.session_state.chat_aktif_id = chat_id
-            st.rerun()
+    # Menarik daftar sesi unik dari Supabase (GROUP BY manual)
+    try:
+        sesi_db_respons = supabase.table("obrolan_jarvis").select("session_id").execute()
+        sesi_unik = list(set([baris['session_id'] for baris in sesi_db_respons.data]))
+        
+        for s_id in sesi_unik:
+            # Tentukan label tombol. Kalau lagi ada di kumpulan_chat, ambil judulnya.
+            label_tombol = f"Sesi: {s_id[:8]}..."
+            if s_id in st.session_state.kumpulan_chat:
+                label = st.session_state.kumpulan_chat[s_id]['judul']
+                label_tombol = f"**{label}**" if s_id == st.session_state.chat_aktif_id else label
+                
+            if st.button(label_tombol, key=f"btn_{s_id}", use_container_width=True):
+                load_chat_dari_db(s_id)
+                st.rerun()
+    except Exception as e:
+        st.warning(f"Gagal konek DB: {e}")
 
     st.divider()
     if st.button("🚪 Keluar / Logout", use_container_width=True):
@@ -90,7 +157,7 @@ with st.sidebar:
 
 
 # ==========================================
-# 4. AREA CHAT UTAMA & KARTU REKOMENDASI
+# 4. AREA CHAT UTAMA
 # ==========================================
 st.title("🤖 Jarvis Assistant")
 
@@ -109,7 +176,6 @@ if not laci_sekarang["histori_layar"]:
         if st.button("⚽ Update Berita\n\nBola Semalem", use_container_width=True):
             teks_dari_tombol = "Siapa yang menang pertandingan bola semalem?"
 
-# Render histori chat dari LACI YANG LAGI AKTIF
 for pesan in laci_sekarang["histori_layar"]:
     avatar = "🧑‍💻" if pesan["role"] == "user" else "🤖"
     with st.chat_message(pesan["role"], avatar=avatar):
@@ -118,19 +184,13 @@ for pesan in laci_sekarang["histori_layar"]:
             st.image(pesan["gambar"], width=250)
         if pesan.get("suara"):
             st.audio(pesan["suara"], format="audio/wav")
-        # BARU: Tampilin info kalo pernah ngirim PDF
         if pesan.get("pdf_name"):
             st.info(f"📄 Membaca dokumen: **{pesan['pdf_name']}**")
 
-
-# ==========================================
-# 5. FITUR LAMPIRAN (GAMBAR & PDF) & SUARA
-# ==========================================
 st.write("")
 with st.expander("📎 Lampirkan File / 🎙️ Rekam Suara", expanded=False):
     col_img, col_mic = st.columns(2)
     with col_img:
-        # BARU: Tambah ekstensi 'pdf' di kotak uploader
         file_upload = st.file_uploader("Upload Gambar/PDF", type=['png', 'jpg', 'jpeg', 'pdf'], label_visibility="collapsed")
     with col_mic:
         suara_upload = st.audio_input("Ngobrol pake suara")
@@ -139,9 +199,8 @@ with st.expander("📎 Lampirkan File / 🎙️ Rekam Suara", expanded=False):
         if st.button("🚀 Kirim Lampiran/Suara", use_container_width=True):
             teks_dari_tombol = "Tolong analisis file/suara yang gue kirim ini bro."
 
-
 # ==========================================
-# 6. LOGIK PENGIRIMAN PESAN
+# 5. LOGIK PENGIRIMAN PESAN & SIMPAN KE DB
 # ==========================================
 teks_dari_input = st.chat_input("Ketik di sini, atau upload file di atas bro...")
 pertanyaan = teks_dari_input or teks_dari_tombol
@@ -151,10 +210,8 @@ if pertanyaan:
     teks_pdf = ""
     nama_pdf = None
     
-    # Cek jenis file yang diupload (Gambar atau PDF)
     if file_upload:
         if file_upload.name.endswith('.pdf'):
-            # EKSTRAKSI TEKS DARI PDF
             nama_pdf = file_upload.name
             pdf_reader = PyPDF2.PdfReader(file_upload)
             for page in pdf_reader.pages:
@@ -162,43 +219,42 @@ if pertanyaan:
         else:
             img_pil = Image.open(file_upload)
 
+    teks_tampil_user = pertanyaan if not (file_upload or suara_upload) else "*(Mengirim Lampiran)*\n\n" + pertanyaan
+
     if len(laci_sekarang["histori_layar"]) == 0:
-        judul_pendek = pertanyaan[:20] + "..." if len(pertanyaan) > 20 else pertanyaan
+        judul_pendek = teks_tampil_user[:20] + "..." if len(teks_tampil_user) > 20 else teks_tampil_user
         laci_sekarang["judul"] = f"💬 {judul_pendek}"
 
-    # Simpan jejak pesan user ke memori layar
+    # SIMPAN KE MEMORI LAYAR
     laci_sekarang["histori_layar"].append({
-        "role": "user", 
-        "teks": pertanyaan if not (file_upload or suara_upload) else "*(Mengirim Lampiran)*\n\n" + pertanyaan, 
-        "gambar": img_pil,
-        "suara": suara_upload.getvalue() if suara_upload else None,
-        "pdf_name": nama_pdf # Simpan nama PDF biar muncul di riwayat
+        "role": "user", "teks": teks_tampil_user, "gambar": img_pil, "suara": suara_upload.getvalue() if suara_upload else None, "pdf_name": nama_pdf 
     })
     
-    # Nampilin efek di layar user
+    # 💥 BARU: SIMPAN KE DATABASE SUPABASE (USER)
+    try:
+        supabase.table("obrolan_jarvis").insert({
+            "session_id": st.session_state.chat_aktif_id,
+            "role": "user",
+            "pesan": teks_tampil_user
+        }).execute()
+    except Exception as e:
+        st.toast(f"Gagal simpan ke DB: {e}")
+
     with st.chat_message("user", avatar="🧑‍💻"):
-        st.markdown(pertanyaan)
-        if img_pil:
-            st.image(img_pil, width=250)
-        if suara_upload:
-            st.audio(suara_upload.getvalue(), format="audio/wav")
-        if nama_pdf:
-            st.info(f"📄 Mengirim dokumen: **{nama_pdf}**")
+        st.markdown(teks_tampil_user)
+        if img_pil: st.image(img_pil, width=250)
+        if suara_upload: st.audio(suara_upload.getvalue(), format="audio/wav")
+        if nama_pdf: st.info(f"📄 Mengirim dokumen: **{nama_pdf}**")
     
-    # Proses mikir AI
     with st.chat_message("assistant", avatar="🤖"):
         try:
             isi_pesan = []
-            
-            # Kalau ada PDF, kita jejalin isi teks PDF-nya barengan sama pertanyaan lu (Context Stuffing)
             if teks_pdf:
-                prompt_pdf = f"Berikut adalah isi dokumen yang gue lampirkan:\n\n{teks_pdf[:50000]}\n\n---\nBerdasarkan dokumen di atas, tolong jawab: {pertanyaan}"
-                isi_pesan.append(prompt_pdf)
+                isi_pesan.append(f"Isi dokumen:\n\n{teks_pdf[:50000]}\n\n---\nPertanyaan: {pertanyaan}")
             else:
                 isi_pesan.append(pertanyaan)
                 
-            if img_pil:
-                isi_pesan.append(img_pil)
+            if img_pil: isi_pesan.append(img_pil)
             if suara_upload:
                 audio_part = types.Part.from_bytes(data=suara_upload.getvalue(), mime_type="audio/wav")
                 isi_pesan.append(audio_part)
@@ -210,13 +266,17 @@ if pertanyaan:
             
             respons_teks = st.write_stream(generate_typing_effect())
             
+            # SIMPAN KE MEMORI LAYAR
             laci_sekarang["histori_layar"].append({
-                "role": "assistant", 
-                "teks": respons_teks, 
-                "gambar": None,
-                "suara": None,
-                "pdf_name": None
+                "role": "assistant", "teks": respons_teks, "gambar": None, "suara": None, "pdf_name": None
             })
+            
+            # 💥 BARU: SIMPAN KE DATABASE SUPABASE (AI)
+            supabase.table("obrolan_jarvis").insert({
+                "session_id": st.session_state.chat_aktif_id,
+                "role": "assistant",
+                "pesan": respons_teks
+            }).execute()
             
             st.rerun() 
             
