@@ -5,11 +5,11 @@ import datetime
 from PIL import Image
 import uuid
 import PyPDF2
-from supabase import create_client, Client # BARU: Import Supabase
+from supabase import create_client, Client
+from streamlit_cookies_controller import CookieController # BARU: Import tukang kue (Cookies)
 
 st.set_page_config(page_title="Jarvis AI", page_icon="🤖", layout="centered")
 
-# Ambil semua rahasia dari Cloud
 API_KEY = st.secrets["Your_API_Key"]
 PIN_RAHASIA = st.secrets["App_PIN"]
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
@@ -18,7 +18,6 @@ SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 # ==========================================
 # 0. KONEKSI KE DATABASE SUPABASE
 # ==========================================
-# Inisialisasi Supabase cuma sekali aja
 @st.cache_resource
 def init_supabase() -> Client:
     return create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -26,22 +25,34 @@ def init_supabase() -> Client:
 supabase = init_supabase()
 
 # ==========================================
-# 1. GERBANG LOGIN PIN RAHASIA
+# 1. GERBANG LOGIN PIN RAHASIA (VERSI COOKIES)
 # ==========================================
-if "logged_in" not in st.session_state:
+# Kita panggil si pengatur Cookies
+cookie_controller = CookieController()
+
+# Cek apakah browser ini udah punya tiket masuk (cookie)
+if cookie_controller.get("jarvis_kunci") == "terbuka":
+    st.session_state.logged_in = True
+else:
     st.session_state.logged_in = False
 
 if not st.session_state.logged_in:
     st.title("🔒 Jarvis Security Gate")
     input_pin = st.text_input("Masukkan PIN Rahasia Lo:", type="password")
+    
     if st.button("Unlock Jarvis 🔑", use_container_width=True):
         if input_pin == PIN_RAHASIA:
+            # Kalau PIN bener, kasih tiket masuk (cookie) ke browser lu!
+            cookie_controller.set("jarvis_kunci", "terbuka")
             st.session_state.logged_in = True
             st.rerun()
         else:
             st.error("PIN Salah bro! Jangan macem-macem ya.")
     st.stop()
 
+# ==========================================
+# (LANJUTKAN DENGAN SISA KODE LO MULAI DARI BAGIAN 2 DI SINI)
+# ==========================================
 # ==========================================
 # 2. INISIALISASI AI CLIENT
 # ==========================================
@@ -151,7 +162,8 @@ with st.sidebar:
         st.warning(f"Gagal konek DB: {e}")
 
     st.divider()
-    if st.button("🚪 Keluar / Logout", use_container_width=True):
+   if st.button("🚪 Keluar / Logout", use_container_width=True):
+        cookie_controller.remove("jarvis_kunci") # Hapus tiketnya dari browser
         st.session_state.logged_in = False
         st.rerun()
 
