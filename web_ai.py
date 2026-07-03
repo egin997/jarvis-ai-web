@@ -25,13 +25,10 @@ def init_supabase() -> Client:
 supabase = init_supabase()
 
 # ==========================================
-# 1. GERBANG LOGIN PIN RAHASIA (VERSI COOKIES)
+# 1. GERBANG LOGIN PIN RAHASIA (VERSI URL PARAMS)
 # ==========================================
-# Kita panggil si pengatur Cookies
-cookie_controller = CookieController()
-
-# Cek apakah browser ini udah punya tiket masuk (cookie)
-if cookie_controller.get("jarvis_kunci") == "terbuka":
+# Cek apakah di link URL browser lu udah ada tiket masuknya
+if st.query_params.get("kunci") == "terbuka":
     st.session_state.logged_in = True
 else:
     st.session_state.logged_in = False
@@ -42,8 +39,8 @@ if not st.session_state.logged_in:
     
     if st.button("Unlock Jarvis 🔑", use_container_width=True):
         if input_pin == PIN_RAHASIA:
-            # Kalau PIN bener, kasih tiket masuk (cookie) ke browser lu!
-            cookie_controller.set("jarvis_kunci", "terbuka")
+            # Kalau PIN bener, pasang tiketnya di ujung link URL lu!
+            st.query_params["kunci"] = "terbuka"
             st.session_state.logged_in = True
             st.rerun()
         else:
@@ -163,10 +160,9 @@ with st.sidebar:
 
         st.divider()
         if st.button("🚪 Keluar / Logout", use_container_width=True):
-             cookie_controller.remove("jarvis_kunci") # Hapus tiketnya dari browser
-             st.session_state.logged_in = False
-             st.rerun()
-
+            st.query_params.clear() # Hapus tiket dari ujung link URL
+            st.session_state.logged_in = False
+            st.rerun()
 
 # ==========================================
 # 4. AREA CHAT UTAMA
