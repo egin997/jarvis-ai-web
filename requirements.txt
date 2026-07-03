@@ -3,4 +3,3 @@ google-genai
 pillow
 PyPDF2
 supabase
-streamlit-cookies-controller
