@@ -161,7 +161,7 @@ with st.sidebar:
     except Exception as e:
         st.warning(f"Gagal konek DB: {e}")
 
-    st.divider()
+        st.divider()
         if st.button("🚪 Keluar / Logout", use_container_width=True):
              cookie_controller.remove("jarvis_kunci") # Hapus tiketnya dari browser
              st.session_state.logged_in = False
