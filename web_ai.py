@@ -162,10 +162,10 @@ with st.sidebar:
         st.warning(f"Gagal konek DB: {e}")
 
     st.divider()
-       if st.button("🚪 Keluar / Logout", use_container_width=True):
-        cookie_controller.remove("jarvis_kunci") # Hapus tiketnya dari browser
-        st.session_state.logged_in = False
-        st.rerun()
+        if st.button("🚪 Keluar / Logout", use_container_width=True):
+             cookie_controller.remove("jarvis_kunci") # Hapus tiketnya dari browser
+             st.session_state.logged_in = False
+             st.rerun()
 
 
 # ==========================================
